@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 import os
 from werkzeug.utils import secure_filename
-from model import extract_features, find_similar_images, find_similar_images_sql
+from model import extract_features, similar_images
 import secrets
 
 app = Flask(__name__)
@@ -37,8 +37,8 @@ def index():
                 features = extract_features(file_path)
                 if features is not None:
                     print("Features extracted successfully")
-                    similar_images = find_similar_images_sql(features)
-                    results = similar_images[:3]  # Lấy 3 ảnh tương tự nhất
+                    similar_imgs = similar_images(features)
+                    results = similar_imgs[:3]  # Lấy 3 ảnh tương tự nhất
                     print(f"Found similar images: {results}")
                 else:
                     error_message = "Không thể xử lý ảnh đầu vào. Vui lòng đảm bảo ảnh hợp lệ."

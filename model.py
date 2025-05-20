@@ -2,103 +2,80 @@ import os
 import joblib
 import numpy as np
 from PIL import Image
-import torch
-from torchvision import models, transforms
+import cv2
+from skimage.morphology import skeletonize
 from sklearn.metrics.pairwise import cosine_similarity
-import psycopg2
 
-# Load model ResNet18
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = models.resnet18(pretrained=True)
-model = torch.nn.Sequential(*list(model.children())[:-1])  # Bỏ layer phân loại
-model = model.to(device)
-model.eval()
-
-# Transform cho ResNet18
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-])
-
-# Load dữ liệu đã lưu
+# Load data
 all_images = joblib.load('all_imag.jbl')
-attribute_list = joblib.load('attribute.jbl')  # Đã là list các vector 512
+attribute_list = joblib.load('attribute.jbl')
+
+def extract_hu_moments(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    moments = cv2.moments(gray)
+    hu = cv2.HuMoments(moments).flatten()
+    return hu
+
+def extract_skeleton_features(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 127, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    skeleton = skeletonize(binary).astype(np.uint8)
+    # Use the sum of skeleton pixels as a simple feature (or flatten for more detail)
+    skeleton_sum = np.sum(skeleton)
+    return np.array([skeleton_sum], dtype=np.float32)
+
+def extract_hsv_histogram(img, bins=(8, 8, 8)):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1, 2], None, bins,
+                        [0, 180, 0, 256, 0, 256])
+    hist = cv2.normalize(hist, hist).flatten()
+    return hist
 
 def extract_features(img_path):
-    """Trích xuất đặc trưng từ ảnh bằng ResNet18, xử lý trực tiếp nếu là ảnh đã cắt"""
+    if not os.path.exists(img_path):
+        print(f"File does not exist: {img_path}")
+        return None
     try:
-        if not os.path.exists(img_path):
-            print(f"File does not exist: {img_path}")
+        img = cv2.imread(img_path)
+        if img is None:
+            print(f"Cannot read image: {img_path}")
             return None
-
-        img = Image.open(img_path).convert('RGB')
-        img_tensor = transform(img).unsqueeze(0).to(device)
-        with torch.no_grad():
-            result = model(img_tensor)
-        features = result.cpu().numpy().flatten()  # 512-dim vector
-        print(f"Features extracted for {img_path}")
-        return features
-
+        hu = extract_hu_moments(img)
+        skeleton = extract_skeleton_features(img)
+        hsv_hist = extract_hsv_histogram(img)
+        # Chuẩn hóa từng phần
+        hu = (hu - np.min(hu)) / (np.max(hu) - np.min(hu) + 1e-8)
+        skeleton = skeleton / (np.max(skeleton) + 1e-8)
+        hsv_hist = hsv_hist / (np.sum(hsv_hist) + 1e-8)
+        feature = np.concatenate([hu, skeleton, hsv_hist])
+        return feature
     except Exception as e:
-        print(f"General error processing image {img_path}: {str(e)}")
+        print(f"Error processing {img_path}: {e}")
         return None
 
-def find_similar_images(query_features):
-    """Tìm kiếm 3 ảnh tương tự nhất và trả về đường dẫn cùng tên nhân vật"""
+
+from sklearn.preprocessing import normalize
+
+def similar_images(query_features, top_k=3):
     if query_features is None or len(query_features) == 0:
         print("Query features are invalid")
         return []
-
-    similarities = []
-    for i in range(len(attribute_list)):
-        sim_score = cosine_similarity(query_features.reshape(1, -1), np.array(attribute_list[i]).reshape(1, -1))[0][0]
-        similarities.append((i, sim_score))
-
-    top_indices = sorted(similarities, key=lambda x: x[1], reverse=True)[:3]
-
+    # Chuẩn hóa vector truy vấn
+    query_norm = normalize(query_features.reshape(1, -1))
+    # Chuẩn hóa toàn bộ attribute_list
+    attr_matrix = np.array(attribute_list)
+    attr_norm = normalize(attr_matrix)
+    # Tính cosine similarity
+    sims = (attr_norm @ query_norm.T).flatten()
+    top_idx = np.argsort(sims)[::-1][:top_k]
     results = []
-    for idx, score in top_indices:
-        img_path = all_images[idx]
-        img_path = img_path.replace('\\', '/')
-        character_name = os.path.basename(os.path.dirname(img_path))
+    for idx in top_idx:
+        img_path = all_images[idx].replace('\\', '/')
+        leaf = os.path.basename(os.path.dirname(img_path))
         display_path = img_path.replace('static/', '')
         results.append({
             'path': display_path,
-            'character': character_name,
-            'score': float(score)
+            'leaf': leaf,
+            'score': float(sims[idx])  # Đã là cosine similarity, nằm trong [0,1]
         })
-
     return results
-
-def find_similar_images_sql(query_features, top_k=3):
-    conn = psycopg2.connect(
-        host=os.getenv('DB_HOST'),
-        dbname=os.getenv('DB_NAME'),
-        user=os.getenv('DB_USER'),
-        password=os.getenv('DB_PASS')
-    )
-    with conn.cursor() as cur:
-        # Chuyển vector numpy sang chuỗi cho truy vấn pgvector
-        vector_str = '[' + ','.join(str(float(x)) for x in query_features) + ']'
-        cur.execute('''
-            SELECT i.image_path, i.name, f.feature_vector <=> %s::vector AS distance
-            FROM image_features f
-            JOIN images i ON f.image_id = i.id
-            WHERE f.model_name = 'resnet18'
-            ORDER BY distance ASC
-            LIMIT %s;
-        ''', (vector_str, top_k))
-        results = cur.fetchall()
-    conn.close()
-    # Trả về danh sách dict giống hệt find_similar_images
-    formatted_results = []
-    for row in results:
-        img_path = row[0].replace('\\', '/').replace('static/', '')
-        character_name = row[1]
-        display_path = img_path  # đã loại static/ ở trên
-        formatted_results.append({
-            'path': display_path,
-            'character': character_name,
-            'score': float(1-row[2])
-        })
-    return formatted_results
