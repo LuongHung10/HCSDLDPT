@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leaf Similarity Search</title>
+    <!-- Include Tailwind CSS from CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Link to external CSS file -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body class="bg-gray-100">
+    <!-- Header -->
+    <header class="bg-pink-200 text-gray-800 shadow-md fixed w-full top-0 z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center py-4">
+                <h1 class="text-2xl font-bold">Leaf Similarity Search</h1>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container max-w-7xl mx-auto p-6 pt-24">
+        <div class="flex flex-col md:flex-row gap-6">
+            <!-- Left Column: Upload Form and Preview -->
+            <div class="w-full md:w-1/2 bg-white rounded-2xl shadow-lg p-6">
+                <!-- Upload + Search Form -->
+                <form method="post" enctype="multipart/form-data"
+                    class="form upload-form flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
+                    <label class="file-input-label w-full sm:w-auto">
+                        <input type="file" name="file" accept="image/*" required id="file-input"
+                            class="LeafSimilarity__input block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer">
+                    </label>
+                    <button type="submit"
+                        class="LeafSimilarity__btn bg-indigo-600 text-white font-semibold py-2 px-6 rounded-full hover:bg-indigo-700">Search</button>
+                </form>
+
+                <!-- Preview Image Section -->
+                <div id="preview-section" class="section mb-8 hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-xl font-semibold text-gray-700">Leaf Image Preview:</h3>
+                        <button id="clear-preview"
+                            class="LeafSimilarity__btn bg-red-500 text-white font-semibold py-1 px-4 rounded-full hover:bg-red-600">Clear
+                            Image</button>
+                    </div>
+                    <div class="flex justify-center">
+                        <img id="preview-img" src="#" alt="Leaf Image Preview"
+                            class="LeafSimilarity__img max-w-full h-auto sm:max-w-md">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Results -->
+            <div class="w-full md:w-1/2 bg-white rounded-2xl shadow-lg p-6">
+                <!-- Error Message -->
+                {% if error_message %}
+                <div class="alert error bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-lg">
+                    {{ error_message }}
+                </div>
+                {% endif %}
+
+                <!-- Search Results -->
+                {% if results %}
+                <div class="section">
+                    <h3 class="text-xl font-semibold text-gray-700 mb-4">Similar Leaves:</h3>
+                    <div class="results grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        {% for result in results %}
+                        <div class="LeafSimilarity__result-item bg-gray-50 p-4 rounded-lg shadow-sm text-center">
+                            <img src="{{ url_for('static', filename=result.path) }}" alt="Result Image"
+                                class="LeafSimilarity__img w-full h-48 object-cover mb-2">
+                            <p class="text-gray-800 font-medium">{{ result.character }}<br><span
+                                    class="score text-sm text-gray-500">Similarity: {{ "%.2f" % (result.score * 100)
+                                    }}%</span></p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript for Preview and Clear Functionality -->
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const previewSection = document.getElementById('preview-section');
+        const previewImg = document.getElementById('preview-img');
+        const clearPreviewBtn = document.getElementById('clear-preview');
+
+        fileInput.addEventListener('change', function (event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    previewImg.src = e.target.result;
+                    previewSection.classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            } else {
+                previewSection.classList.add('hidden');
+            }
+        });
+
+        clearPreviewBtn.addEventListener('click', function () {
+            fileInput.value = ''; // Reset input file
+            previewSection.classList.add('hidden'); // Hide preview
+            previewImg.src = '#'; // Reset image
+        });
+    </script>
+</body>
+
+</html>
