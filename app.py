@@ -1,8 +1,14 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 import os
 from werkzeug.utils import secure_filename
-from model import extract_features, similar_images
+from model import extract_features, similar_images_kmeans, initialize_kmeans
 import secrets
+import joblib
+
+# Load data và khởi tạo K-Means
+all_images = joblib.load('all_imag.jbl')
+attribute_list = joblib.load('attribute.jbl')
+kmeans_model = initialize_kmeans(attribute_list, n_clusters=5)
 
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', secrets.token_hex(32))
@@ -16,7 +22,7 @@ def allowed_file(filename):
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    results = session.get('results', []) 
+    results = session.get('results', [])
     uploaded_image = session.get('uploaded_image', None)
     error_message = None
 
@@ -31,14 +37,15 @@ def index():
                 file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 file.save(file_path)
                 uploaded_image = filename
-                print(f"Uploaded image saved at: {file_path}")  
+                print(f"Uploaded image saved at: {file_path}")
 
                 # Trích xuất đặc trưng
                 features = extract_features(file_path)
                 if features is not None:
                     print("Features extracted successfully")
-                    similar_imgs = similar_images(features)
-                    results = similar_imgs[:3]  # Lấy 3 ảnh tương tự nhất
+                    # Sử dụng K-Means để tìm kiếm ảnh
+                    similar_imgs = similar_images_kmeans(features, kmeans_model, top_k=3)
+                    results = similar_imgs
                     print(f"Found similar images: {results}")
                 else:
                     error_message = "Không thể xử lý ảnh đầu vào. Vui lòng đảm bảo ảnh hợp lệ."
