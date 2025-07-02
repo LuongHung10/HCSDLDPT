@@ -37,11 +37,26 @@ def create_tables(conn, feature_dim):
             );
         """)
         cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS image_features (
+            CREATE TABLE hu_features (
                 id SERIAL PRIMARY KEY,
                 image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
-                model_name TEXT NOT NULL,
-                feature_vector VECTOR({feature_dim}),
+                feature_vector VECTOR(7),
+                extracted_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS sk_features (
+                id SERIAL PRIMARY KEY,
+                image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+                feature_vector VECTOR(1),
+                extracted_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS hsv_features (
+                id SERIAL PRIMARY KEY,
+                image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+                feature_vector VECTOR(512),
                 extracted_at TIMESTAMP DEFAULT NOW()
             );
         """)
@@ -58,14 +73,30 @@ def insert_image(conn, name, image_path, image_type, description, description_ve
         conn.commit()
         return image_id
 
-def insert_feature(conn, image_id, model_name, feature_vector):
+def insert_hu_features(conn, image_id, feature_vector):
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO image_features (image_id, model_name, feature_vector)
-            VALUES (%s, %s, %s)
-            RETURNING id;
-        """, (image_id, model_name, feature_vector))
+            INSERT INTO hu_features (image_id, feature_vector)
+            VALUES (%s, %s)
+        """, (image_id, feature_vector))
         conn.commit()
+
+def insert_sk_features(conn, image_id, feature_vector):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO sk_features (image_id, feature_vector)
+            VALUES (%s, %s)
+        """, (image_id, feature_vector))
+        conn.commit()
+
+def insert_hsv_features(conn, image_id, feature_vector):
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO hsv_features (image_id, feature_vector)
+            VALUES (%s, %s)
+        """, (image_id, feature_vector))
+        conn.commit()
+
 
 def get_clip_text_embedding(text, tokenizer, text_model):
     inputs = tokenizer([text], padding=True, return_tensors="pt")
@@ -79,9 +110,10 @@ def upload_all_images():
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch16")
     text_model = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch16")
 
-    attribute_list = joblib.load(open("attribute.jbl", 'rb'))
-    feature_dim = int(np.array(attribute_list[0]).flatten().shape[0])
-    create_tables(conn, feature_dim)
+    # Load dữ liệu đặc trưng từ file duy nhất
+    attributes = joblib.load(open("attribute.jbl", 'rb'))
+
+    create_tables(conn, 256)  # Tạo bảng với cấu trúc cần thiết
     image_idx = 0
 
     for name in os.listdir(IMAGE_DIR):
@@ -101,12 +133,14 @@ def upload_all_images():
                 print(f'Uploading {image_path}...')
                 image_id = insert_image(conn, name, image_path, image_type, description, desc_vec)
 
-                # Feature vector from attribute_list
-                feature_vec = np.array(attribute_list[image_idx]).astype(float).flatten().tolist()
-                if len(feature_vec) != feature_dim:
-                    print(f"Warning: Feature vector at {image_path} has {len(feature_vec)} dims, expected {feature_dim}. Skipping.")
-                    continue
-                insert_feature(conn, image_id, 'hm-sk-hs', feature_vec)
+                # Lấy đặc trưng cho ảnh hiện tại
+                attribute = attributes[image_idx]
+
+                # Lưu đặc trưng vào bảng tương ứng
+                insert_hu_features(conn, image_id, attribute["hu"])
+                insert_sk_features(conn, image_id, attribute["sk"])
+                insert_hsv_features(conn, image_id, attribute["hsv"])
+
                 image_idx += 1
 
     conn.close()
